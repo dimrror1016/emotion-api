@@ -1,5 +1,4 @@
 import gradio as gr
-from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import numpy as np
@@ -7,9 +6,7 @@ import numpy as np
 # -------------------------
 # CONFIG
 # -------------------------
-MODEL_NAME = "goemotions/goemotions"
-
-# Load model and tokenizer
+MODEL_NAME = "monologg/bert-base-cased-goemotions-original"  # Public model
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 model.eval()
@@ -48,7 +45,6 @@ GOEMO_TO_FLOWERS = {
     "disappointment": "Disappointment"
 }
 
-# Flower type mapping
 def get_flower_type(emotion: str) -> str:
     flower_map = {
         "Admiration": "Orchid",
@@ -82,10 +78,9 @@ def get_flower_type(emotion: str) -> str:
     return flower_map.get(emotion, "Unknown")
 
 # -------------------------
-# Prediction function for Gradio
+# Prediction function
 # -------------------------
 def predict_flower(text: str, threshold: float = 0.3, top_k: int = 3):
-    # Tokenize
     inputs = tokenizer(
         text,
         return_tensors="pt",
@@ -93,18 +88,15 @@ def predict_flower(text: str, threshold: float = 0.3, top_k: int = 3):
         padding=True,
         max_length=512
     )
-
     with torch.no_grad():
         logits = model(**inputs).logits
 
     probs = torch.sigmoid(logits)[0].cpu().numpy()
 
-    # Filter by threshold or pick top_k
     indices = np.where(probs > threshold)[0]
     if len(indices) == 0:
         indices = np.argsort(probs)[-top_k:][::-1]
 
-    # Aggregate flower emotions
     flower_scores = {}
     for idx in indices:
         label = LABELS[idx]
@@ -113,11 +105,7 @@ def predict_flower(text: str, threshold: float = 0.3, top_k: int = 3):
         flower_scores[flower] = max(score, flower_scores.get(flower, 0))
 
     results = [
-        {
-            "flower_emotion": flower,
-            "score": score,
-            "flower_type": get_flower_type(flower)
-        }
+        {"flower_emotion": flower, "score": score, "flower_type": get_flower_type(flower)}
         for flower, score in flower_scores.items()
     ]
 
@@ -133,7 +121,7 @@ def predict_flower(text: str, threshold: float = 0.3, top_k: int = 3):
     return dominant["flower_emotion"], dominant["score"]
 
 # -------------------------
-# Gradio interface
+# Gradio Interface
 # -------------------------
 iface = gr.Interface(
     fn=predict_flower,
@@ -150,4 +138,4 @@ iface = gr.Interface(
     description="Enter a sentence to detect the dominant flower emotion."
 )
 
-iface.launch()
+iface.launch(server_name="0.0.0.0", server_port=7860)
