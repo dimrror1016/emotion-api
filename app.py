@@ -2,18 +2,21 @@ import gradio as gr
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import numpy as np
+from fastapi import FastAPI, Request
+import uvicorn
+import json
 
 # -------------------------
 # CONFIG
 # -------------------------
-MODEL_NAME = "monologg/bert-base-cased-goemotions-original"  # Public model
+MODEL_NAME = "monologg/bert-base-cased-goemotions-original"
 tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME)
 model.eval()
 LABELS = model.config.id2label
 
 # -------------------------
-# Emotion mapping
+# Emotion -> Flower mapping
 # -------------------------
 GOEMO_TO_FLOWERS = {
     "admiration": "Admiration",
@@ -92,7 +95,6 @@ def predict_flower(text: str, threshold: float = 0.3, top_k: int = 3):
         logits = model(**inputs).logits
 
     probs = torch.sigmoid(logits)[0].cpu().numpy()
-
     indices = np.where(probs > threshold)[0]
     if len(indices) == 0:
         indices = np.argsort(probs)[-top_k:][::-1]
@@ -118,7 +120,8 @@ def predict_flower(text: str, threshold: float = 0.3, top_k: int = 3):
         "flower_type": "Unknown"
     }
 
-    return dominant["flower_emotion"], dominant["score"]
+    # Return the same format PHP expects
+    return [dominant["flower_emotion"], dominant["score"]]
 
 # -------------------------
 # Gradio Interface
@@ -138,5 +141,32 @@ iface = gr.Interface(
     description="Enter a sentence to detect the dominant flower emotion."
 )
 
+# -------------------------
+# FastAPI for PHP integration
+# -------------------------
+app = FastAPI()
+
+@app.post("/api/predict/")
+async def api_predict(request: Request):
+    try:
+        payload = await request.json()
+        data = payload.get("data", [])
+        if len(data) < 1:
+            return {"error": "No text provided."}
+
+        text = data[0]
+        threshold = float(data[1]) if len(data) > 1 else 0.3
+        top_k = int(data[2]) if len(data) > 2 else 3
+
+        flower_emotion, score = predict_flower(text, threshold, top_k)
+        return {"data": [flower_emotion, score]}
+
+    except Exception as e:
+        return {"error": str(e)}
+
+# -------------------------
+# Launch both Gradio UI + FastAPI
+# -------------------------
 if __name__ == "__main__":
-    iface.queue().launch()
+    iface.queue()
+    iface.launch(server_name="0.0.0.0", server_port=7860, share=True)
